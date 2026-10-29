@@ -1,6 +1,6 @@
 # Seedsow FTP Bridge
 
-通过 **EasyCon ESP32-S3 手柄输入 + OBS 游戏画面**，为 Seedsow Lua Editor 提供电脑端 FTP 文件中转。支持黑白和校准后的 8 色数据画面；彩色模式每页携带 1664 字节，黑白模式为 512 字节。
+通过 **EasyCon ESP32-S3 手柄输入 + OBS 游戏画面**，为 Seedsow Lua Editor 提供电脑端 FTP 文件中转。游戏端使用经过校准的 8 色数据画面，每页携带 1664 字节。
 
 An experimental Windows-hosted FTP bridge for Seedsow Lua Editor. Commands and uploads travel through an EasyCon controller; file contents return through an optical data grid captured by OBS. The console does **not** listen on a network FTP port.
 
@@ -41,27 +41,17 @@ OBS 连接使用本机安装配置中的端口及认证信息；程序不会把 
 ## 首次安装游戏端脚本
 
 1. 在游戏的 Seedsow Lua Editor 中进入 **Receive PC**。
-2. 双击电脑上的 `INSTALL.cmd`。它只负责发送安装包，当前时序下一般需要约 12 分钟。
-3. 必须等游戏显示 `PC FILE SAVED: ftp_console.lua`。如果报告传输或校验错误，重新进入 Receive PC 重试，不要运行旧缓冲区。
-4. 按 **L** 退出接收、松开，再按 **Y** 运行。出现 `FTP 0 / 1/1 / 5 bytes / OK` 和黑白方块表示 READY。
+2. 双击电脑上的 `INSTALL.cmd`。它只负责发送约 4.1 KiB 的安装包，当前时序下预计需要约 14 分钟。
+3. 必须等游戏显示 `PC FILE SAVED: ftp_console_color.lua`。如果报告传输或校验错误，重新进入 Receive PC 重试，不要运行旧缓冲区。
+4. 按 **L** 退出接收、松开，再按 **Y** 运行。出现 `FTP COLOR 0 / 1/1 / 5 bytes / OK` 和顶部 8 个色块表示 READY。
 
-安装包会解压并保存完整可运行的 `ftp_console.lua`。源码只做了注释和空白压缩，本仓库的同名文件保留可读格式。
+安装包会直接解压并保存完整可运行的 `ftp_console_color.lua`，不依赖旧版脚本。源码只做了注释和空白压缩，本仓库的同名文件保留可读格式。
 
-之后在编辑器的 **File / new** 中打开已保存的 `ftp_console.lua`，再按 **Y** 即可运行。`START.cmd` 只启动电脑 FTP 服务，不会自动打开游戏、加载存档或运行游戏脚本。
+之后在编辑器的 **File / new** 中打开已保存的 `ftp_console_color.lua`，再按 **Y** 即可运行。`START.cmd` 只启动电脑 FTP 服务，不会自动打开游戏、加载存档或运行游戏脚本。
 
-## 可选：升级为 8 色下载
+已经安装 v0.2.0 彩色脚本时，无需重装游戏端，只需更新电脑程序并保留自己的 `config.json`。从旧黑白版迁移时，先用 `STOP.cmd` 停止电脑服务，游戏长按 L 返回编辑器，再按上述步骤直接安装彩色版。
 
-在本工具 v0.1.0 安装的黑白脚本基础上升级：
-
-1. 使用本版本电脑程序；保留自己的 `config.json`。
-2. 用 `STOP.cmd` 停止电脑 FTP 服务，游戏中长按 L 返回编辑器，然后进入 **Receive PC**。
-3. 双击 `UPGRADE_COLOR.cmd`，发送约 1.8 KiB 的升级脚本，通常约需 6 分钟。
-4. 游戏显示 `PC FILE SAVED: ftp_color_upgrade.lua` 后，按 L、松开，再按 Y 运行。
-5. 升级器检查原脚本的长度和校验值，单独保存并运行 `ftp_console_color.lua`。出现 `FTP COLOR` 和顶部 8 个色块后，可以启动 `START.cmd`。
-
-以后从 File / new 打开 `ftp_console_color.lua` 运行即可。**原来的 `ftp_console.lua` 不会被覆盖**；回退时停止服务、长按 L，改为打开并运行该黑白脚本。新版电脑程序同时识别 SF01 和 SF02。
-
-差分升级要求原脚本是由 v0.1.0 安装器生成的 4264 字节版本；不匹配时会报 `FTP baseline mismatch`，并在写入彩色脚本前停止。尚未安装本工具时，请先执行上一节的首次安装。
+## 8 色下载
 
 彩色模式的每个格子代表 3 位数据。电脑从同一帧的 8 个色块读取实际颜色作为校准值，对每页独立校验，错误页会重新截图。整个文件仍做总校验。翻页时复用相同颜色和尺寸的图形对象，减少重新创建图层的开销；一次文件请求内复用 OBS 连接，避免每页重复认证。
 
@@ -91,7 +81,6 @@ OBS 连接使用本机安装配置中的端口及认证信息；程序不会把 
 | `STOP.cmd` | 停止电脑服务，等待当前游戏请求完成，不退出游戏脚本 |
 | `EXIT_GAME.cmd` | 检查数据画面后长按 L，返回 Lua 编辑器；应先停止电脑服务 |
 | `INSTALL.cmd` | 首次发送安装包，需要手动进入 Receive PC 并确认保存成功 |
-| `UPGRADE_COLOR.cmd` | 从已安装黑白版升级到独立的彩色脚本；旧脚本保留 |
 
 关闭 START 窗口会终止电脑服务，传输中应优先使用 `STOP.cmd`。关闭浏览器或断开 FTP 客户端不会停止服务。退出游戏脚本也可以在手柄上长按 L 约 1.5 秒；需要再次使用时按 Y 运行。
 
@@ -132,23 +121,20 @@ OBS 连接使用本机安装配置中的端口及认证信息；程序不会把 
 
 ```powershell
 py -3 -m unittest discover -s tests -v
-py -3 pack_bootstrap.py ftp_console.lua ftp_bootstrap.lua
+py -3 pack_bootstrap.py ftp_console_color.lua ftp_bootstrap.lua
 ```
 
-31 项测试覆盖本机模拟 FTP、黑白/彩色画面解码、OBS 会话复用、坏页重截、Lua 差分升级及翻页矩形池。它们不会访问串口、OBS 或主机，不等同于硬件验证；Lua 5.1 运行时测试在未安装该解释器时会跳过。
+测试覆盖本机模拟 FTP、画面解码、OBS 会话复用、坏页重截、独立彩色安装包及翻页矩形池。它们不会访问串口、OBS 或主机，不等同于硬件验证；Lua 5.1 运行时测试在未安装该解释器时会跳过。
 
-修改黑白源码后需要重新生成安装包；修改彩色源码后执行 `py -3 make_color_upgrade.py` 重新生成差分升级包。升级器的基线必须与游戏已安装的黑白源码一致。
+修改 `ftp_console_color.lua` 后，执行上述打包命令重新生成 `ftp_bootstrap.lua`。
 
 主要文件：
 
 | 文件 | 用途 |
 | --- | --- |
-| `ftp_console.lua` | 游戏内文件请求、索引和光学响应 |
-| `ftp_console_color.lua` | 兼容相同请求的 8 色光学响应 |
-| `ftp_bootstrap.lua` | 可通过手柄输入传入的安装包 |
-| `ftp_color_upgrade.lua` | 保留黑白版的差分升级包 |
+| `ftp_console_color.lua` | 游戏内文件请求、索引和 8 色光学响应 |
+| `ftp_bootstrap.lua` | 可直接安装彩色脚本的独立安装包 |
 | `pack_bootstrap.py` | Lua 词法压缩与 LZSS/ASCII85 安装包生成 |
-| `make_color_upgrade.py` | 带基线检查的彩色差分升级包生成 |
 | `transport.py` | EasyCon 串口发送、OBS 截图、光学响应解码 |
 | `optical.py` | SF01 黑白和 SF02 校准 8 色解码、逐页校验 |
 | `ftp_server.py` | 本机被动 FTP 服务 |

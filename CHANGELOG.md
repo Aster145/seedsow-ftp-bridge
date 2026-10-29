@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-10-29
+
+- Ship only the color game script; remove the monochrome script and its dependent delta-upgrade tooling.
+- Install the color script directly with INSTALL.cmd, without requiring an older installation.
+- Keep the v0.2.0 color runtime unchanged; existing color installations need no game-side reinstall.
+- Verify the standalone installer with Lua 5.1; all 32 offline tests pass.
+
 ## 0.2.0 — 2026-10-29
 
 - Optional calibrated 8-color optical download protocol: 1664 payload bytes per page, with page and whole-file checksums. Existing 512-byte monochrome pages remain supported.

@@ -290,7 +290,7 @@ class GameTransport:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('check', 'install', 'upgrade-color', 'leave'))
+    parser.add_argument('action', choices=('check', 'install', 'leave'))
     parser.add_argument('--config', type=Path, default=Path(__file__).with_name('config.json'))
     args = parser.parse_args()
     transport = GameTransport(args.config)
@@ -303,10 +303,8 @@ def main():
         print('Returned to the Lua editor.')
     else:
         # User first chooses Receive PC in the editor, as documented.
-        upgrade = args.action == 'upgrade-color'
-        source_name = 'ftp_color_upgrade.lua' if upgrade else 'ftp_bootstrap.lua'
-        saved_name = 'ftp_color_upgrade.lua' if upgrade else 'ftp_console.lua'
-        source = Path(__file__).with_name(source_name).read_bytes()
+        saved_name = 'ftp_console_color.lua'
+        source = Path(__file__).with_name('ftp_bootstrap.lua').read_bytes()
         with Controller(transport.config) as controller:
             controller.send(source, 'F000_' + saved_name)
             time.sleep(1)
@@ -315,8 +313,6 @@ def main():
         print('Only after that confirmation: press L, release, then Y to start the bridge.')
         print('If the game reports a transfer error, do not run the buffer; retry Receive PC.')
         print('START.cmd will verify the optical bridge before opening the FTP port.')
-        if upgrade:
-            print('The upgrade creates ftp_console_color.lua and preserves ftp_console.lua.')
 
 
 if __name__ == '__main__':

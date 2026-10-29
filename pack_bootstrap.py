@@ -1,6 +1,6 @@
 """Pack the FTP console source into a self-installing Lua 5.1 bootstrap.
 
-Usage: python pack_bootstrap.py ftp_console.lua ftp_bootstrap.lua
+Usage: python pack_bootstrap.py ftp_console_color.lua ftp_bootstrap.lua
 By default comments and unnecessary whitespace are removed before installation.
 The bootstrap saves this equivalent source before compiling and running it.
 Use --keep-source to preserve the original source bytes exactly.
@@ -179,7 +179,7 @@ def pack_lua(source: bytes, *, minify: bool = True) -> bytes:
 
     ``minify=False`` restores the input bytes exactly, including binary data.
     Select the smaller direct-source installer or LZSS installer. Both save the
-    complete runnable source, not the wrapping bootstrap, to ftp_console.lua.
+    complete runnable source, not the wrapping bootstrap, to ftp_console_color.lua.
     """
     if minify:
         source = minify_lua(source)
@@ -187,10 +187,10 @@ def pack_lua(source: bytes, *, minify: bool = True) -> bytes:
     payload = _base85(compressed)
     quoted = _quote_lua(payload.encode("ascii"))
     install = (
-        'editor.write("ftp_console.lua",s);'
+        'editor.write("ftp_console_color.lua",s);'
         'local t=seedsow_editor.test_state();'
-        't.filename="ftp_console.lua";t.cursor=0;t.buffer=s;t.saved=s;'
-        'local f=assert(loadstring(s,"@ftp_console.lua"));'
+        't.filename="ftp_console_color.lua";t.cursor=0;t.buffer=s;t.saved=s;'
+        'local f=assert(loadstring(s,"@ftp_console_color.lua"));'
         'setfenv(f,getfenv());return f()\n'
     )
     script = (

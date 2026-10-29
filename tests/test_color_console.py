@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import unittest
 
-from test_color_upgrade import find_lua51
+from test_bootstrap import find_lua51
 
 
 ROOT = Path(__file__).resolve().parents[1]
