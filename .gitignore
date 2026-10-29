@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+config.json
+*.log
+*.png
+verification.json
+dist/
+*.zip

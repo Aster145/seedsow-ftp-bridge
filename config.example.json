@@ -1,0 +1,6 @@
+{
+  "serial_port": "COM6",
+  "obs_source": "",
+  "prepare_seconds": 0.03,
+  "hold_seconds": 0.06
+}
