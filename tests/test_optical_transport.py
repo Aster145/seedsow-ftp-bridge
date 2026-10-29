@@ -1,10 +1,12 @@
 import importlib.util
 import pathlib
+import sys
 import unittest
 import zlib
 from PIL import Image, ImageDraw
 
 path = pathlib.Path(__file__).resolve().parents[1] / 'transport.py'
+sys.path.insert(0, str(path.parent))
 spec = importlib.util.spec_from_file_location('transport', path)
 t = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(t)

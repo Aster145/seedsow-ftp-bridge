@@ -1,0 +1,90 @@
+{
+  "date": "2026-10-29",
+  "environment": "One Windows / NS2 / ESP32-S3 EasyCon / OBS capture setup",
+  "fixture": "16384 bytes: byte values 0 through 255 repeated 64 times; read from a game file",
+  "method": "Three sequential real FTP RETR transfers per mode; same host code, controller timings and screenshot retry policy. One reused OBS connection per request. All returned bytes compared against the fixture.",
+  "timing": "FTP includes controller request setup and complete retrieval. Optical starts after controller.send returns and ends after the final valid page. Values are seconds.",
+  "results": {
+    "mono": {
+      "payload_bytes_per_page": 512,
+      "pages": 32,
+      "median_ftp_seconds": 26.018986,
+      "median_optical_seconds": 13.592691,
+      "runs": [
+        {
+          "run": 1,
+          "ftp_elapsed": 26.320897,
+          "request_setup": 12.437334,
+          "optical": 13.852009,
+          "captures": 35,
+          "retries": 1,
+          "connections": 1,
+          "exact_match": true
+        },
+        {
+          "run": 2,
+          "ftp_elapsed": 26.018986,
+          "request_setup": 12.37875,
+          "optical": 13.592691,
+          "captures": 34,
+          "retries": 0,
+          "connections": 1,
+          "exact_match": true
+        },
+        {
+          "run": 3,
+          "ftp_elapsed": 25.986614,
+          "request_setup": 12.364791,
+          "optical": 13.57296,
+          "captures": 34,
+          "retries": 0,
+          "connections": 1,
+          "exact_match": true
+        }
+      ]
+    },
+    "color": {
+      "payload_bytes_per_page": 1664,
+      "pages": 10,
+      "median_ftp_seconds": 17.688983,
+      "median_optical_seconds": 5.174486,
+      "runs": [
+        {
+          "run": 1,
+          "ftp_elapsed": 17.688983,
+          "request_setup": 12.504016,
+          "optical": 5.15848,
+          "captures": 14,
+          "retries": 2,
+          "connections": 1,
+          "exact_match": true
+        },
+        {
+          "run": 2,
+          "ftp_elapsed": 17.988082,
+          "request_setup": 12.444744,
+          "optical": 5.50698,
+          "captures": 15,
+          "retries": 3,
+          "connections": 1,
+          "exact_match": true
+        },
+        {
+          "run": 3,
+          "ftp_elapsed": 17.654696,
+          "request_setup": 12.449921,
+          "optical": 5.174486,
+          "captures": 14,
+          "retries": 2,
+          "connections": 1,
+          "exact_match": true
+        }
+      ]
+    }
+  },
+  "comparison": {
+    "ftp_speed_ratio": 1.4709147495930095,
+    "optical_speed_ratio": 2.6268678666827974,
+    "ftp_time_reduction_percent": 32.01509466971542
+  }
+}

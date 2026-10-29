@@ -311,7 +311,7 @@ def main():
 
     transport = GameTransport(config_path=args.config)
     if transport.check_ready() is False:
-        raise RuntimeError("The game is not displaying the installed SF01 receiver.")
+        raise RuntimeError("The game is not displaying a supported SF01/SF02 receiver.")
     with GameFTPServer((args.host, args.port), transport) as server:
         host, port = server.server_address
         print(f"Seedsow FTP: ftp://{host}:{port}  user=seedsow password=seedsow", flush=True)

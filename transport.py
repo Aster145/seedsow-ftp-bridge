@@ -4,10 +4,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+from contextlib import contextmanager
 import hashlib
 import io
 import json
-import math
 import os
 from pathlib import Path
 import struct
@@ -18,9 +18,9 @@ import zlib
 import serial
 import websockets
 from PIL import Image
+from optical import HEADER, decode_frame
 
 BUTTONS = {'Y': 1, 'B': 2, 'A': 4, 'X': 8, 'L': 16, 'R': 32}
-HEADER = struct.Struct('<4sIIIIIB')
 MAX_SIZE = 65536
 
 
@@ -104,30 +104,61 @@ class Controller:
             self.s.close()
 
 
-def decode_frame(picture: Image.Image):
-    """Decode the fixed 96x48 grid; adapt to console idle dimming."""
-    if picture.size != (1280, 720):
-        raise ValueError('Expected a 1280x720 game source screenshot')
-    grey = picture.convert('L')
-    samples = [grey.getpixel((165 + x * 10, 125 + y * 10)) for y in range(48) for x in range(96)]
-    low, high = min(samples), max(samples)
-    if high - low < 12:
-        raise ValueError('No optical bridge contrast')
-    threshold = (low + high) / 2
-    raw = bytearray()
-    for start in range(0, len(samples), 8):
-        value = 0
-        for sample in samples[start:start + 8]:
-            value = (value << 1) | (sample > threshold)
-        raw.append(value)
-    magic, seq, total, page, pages, checksum, status = HEADER.unpack_from(raw)
-    if magic != b'SF01':
-        raise ValueError('The game is not showing the FTP bridge grid')
-    if total > MAX_SIZE or pages != max(1, math.ceil(total / 512)) or page >= pages or status not in (0, 1):
-        raise ValueError('Invalid bridge page header')
-    size = min(512, total - page * 512)
-    return dict(seq=seq, total=total, page=page, pages=pages, checksum=checksum,
-                status=status, payload=bytes(raw[HEADER.size:HEADER.size + size]))
+class _OBSCapture:
+    """One connection, authentication and source lookup on one event loop."""
+    def __init__(self, config, metrics=None):
+        self.config = config
+        self.metrics = metrics
+        self.ws = None
+        self.source = config.get('obs_source')
+        self.request_id = 0
+
+    async def connect(self):
+        config_file = Path(os.environ['APPDATA']) / 'obs-studio/plugin_config/obs-websocket/config.json'
+        obs = json.loads(config_file.read_text(encoding='utf-8-sig'))
+        port = self.config.get('obs_port', obs.get('server_port', 4455))
+        self.ws = await websockets.connect(f'ws://127.0.0.1:{port}', max_size=20 * 1024 * 1024, open_timeout=8)
+        if self.metrics is not None:
+            self.metrics['connections'] += 1
+        hello = json.loads(await asyncio.wait_for(self.ws.recv(), 8))['d']
+        identify = {'rpcVersion': 1}
+        if 'authentication' in hello:
+            auth = hello['authentication']
+            secret = base64.b64encode(hashlib.sha256((obs['server_password'] + auth['salt']).encode()).digest()).decode()
+            identify['authentication'] = base64.b64encode(hashlib.sha256((secret + auth['challenge']).encode()).digest()).decode()
+        await self.ws.send(json.dumps({'op': 1, 'd': identify}))
+        response = json.loads(await asyncio.wait_for(self.ws.recv(), 8))
+        if response['op'] != 2:
+            raise RuntimeError('OBS identification failed')
+        if not self.source:
+            scene = (await self.request('GetCurrentProgramScene'))['currentProgramSceneName']
+            items = (await self.request('GetSceneItemList', {'sceneName': scene}))['sceneItems']
+            self.source = next((item['sourceName'] for item in items if item.get('inputKind') == 'dshow_input' and item['sceneItemEnabled']), None)
+            if not self.source:
+                raise RuntimeError('No enabled capture-device source in the current OBS scene')
+
+    async def request(self, kind, data=None):
+        self.request_id += 1
+        request_id = str(self.request_id)
+        await self.ws.send(json.dumps({'op': 6, 'd': {'requestType': kind, 'requestId': request_id, 'requestData': data or {}}}))
+        while True:
+            msg = json.loads(await asyncio.wait_for(self.ws.recv(), 8))
+            if msg['op'] == 7 and msg['d']['requestId'] == request_id:
+                if not msg['d']['requestStatus']['result']:
+                    raise RuntimeError('OBS request failed: ' + str(msg['d']['requestStatus']))
+                return msg['d'].get('responseData', {})
+
+    async def capture(self):
+        if self.ws is None:
+            await self.connect()
+        if self.metrics is not None:
+            self.metrics['captures'] += 1
+        response = await self.request('GetSourceScreenshot', {'sourceName': self.source, 'imageFormat': 'png', 'imageWidth': 1280, 'imageHeight': 720})
+        return Image.open(io.BytesIO(base64.b64decode(response['imageData'].split(',', 1)[1]))).convert('RGB')
+
+    async def close(self):
+        if self.ws is not None:
+            await self.ws.close()
 
 
 class GameTransport:
@@ -136,44 +167,32 @@ class GameTransport:
         self.config = json.loads(self.config_path.read_text(encoding='utf-8-sig'))
         self.lock = threading.Lock()
         self.seq = int(time.time()) & 0xffffffff
+        self.last_metrics = None
+        self._local = threading.local()
 
-    async def _capture(self):
-        config_file = Path(os.environ['APPDATA']) / 'obs-studio/plugin_config/obs-websocket/config.json'
-        obs = json.loads(config_file.read_text(encoding='utf-8-sig'))
-        port = self.config.get('obs_port', obs.get('server_port', 4455))
-        async with websockets.connect(f'ws://127.0.0.1:{port}', max_size=20 * 1024 * 1024, open_timeout=8) as ws:
-            hello = json.loads(await asyncio.wait_for(ws.recv(), 8))['d']
-            identify = {'rpcVersion': 1}
-            if 'authentication' in hello:
-                auth = hello['authentication']
-                secret = base64.b64encode(hashlib.sha256((obs['server_password'] + auth['salt']).encode()).digest()).decode()
-                identify['authentication'] = base64.b64encode(hashlib.sha256((secret + auth['challenge']).encode()).digest()).decode()
-            await ws.send(json.dumps({'op': 1, 'd': identify}))
-            response = json.loads(await asyncio.wait_for(ws.recv(), 8))
-            if response['op'] != 2:
-                raise RuntimeError('OBS identification failed')
-
-            async def request(kind, data=None):
-                await ws.send(json.dumps({'op': 6, 'd': {'requestType': kind, 'requestId': kind, 'requestData': data or {}}}))
-                while True:
-                    msg = json.loads(await asyncio.wait_for(ws.recv(), 8))
-                    if msg['op'] == 7 and msg['d']['requestId'] == kind:
-                        if not msg['d']['requestStatus']['result']:
-                            raise RuntimeError('OBS request failed: ' + str(msg['d']['requestStatus']))
-                        return msg['d'].get('responseData', {})
-
-            source = self.config.get('obs_source')
-            if not source:
-                scene = (await request('GetCurrentProgramScene'))['currentProgramSceneName']
-                items = (await request('GetSceneItemList', {'sceneName': scene}))['sceneItems']
-                source = next((item['sourceName'] for item in items if item.get('inputKind') == 'dshow_input' and item['sceneItemEnabled']), None)
-                if not source:
-                    raise RuntimeError('No enabled capture-device source in the current OBS scene')
-            response = await request('GetSourceScreenshot', {'sourceName': source, 'imageFormat': 'png', 'imageWidth': 1280, 'imageHeight': 720})
-            return Image.open(io.BytesIO(base64.b64decode(response['imageData'].split(',', 1)[1]))).convert('RGB')
+    @contextmanager
+    def _obs_session(self, metrics=None):
+        # A standalone capture gets its own session. A request's captures share
+        # its thread-local session, avoiding websocket reuse across event loops.
+        current = getattr(self._local, 'obs_session', None)
+        if current is not None:
+            yield current
+            return
+        loop = asyncio.new_event_loop()
+        client = _OBSCapture(self.config, metrics)
+        self._local.obs_session = (loop, client)
+        try:
+            yield loop, client
+        finally:
+            try:
+                loop.run_until_complete(client.close())
+            finally:
+                loop.close()
+                del self._local.obs_session
 
     def capture(self):
-        return asyncio.run(self._capture())
+        with self._obs_session() as (loop, client):
+            return loop.run_until_complete(client.capture())
 
     def check_ready(self):
         frame = decode_frame(self.capture())
@@ -192,6 +211,9 @@ class GameTransport:
                 last_error = f"Waiting for sequence {seq}, page {page}; saw {frame['seq']}/{frame['page']}"
             except ValueError as error:
                 last_error = str(error)
+            current = getattr(self._local, 'obs_session', None)
+            if current is not None and current[1].metrics is not None:
+                current[1].metrics['retries'] += 1
             time.sleep(.25)
         raise TimeoutError(last_error + '; no request was automatically replayed')
 
@@ -201,35 +223,74 @@ class GameTransport:
         if len(data) > MAX_SIZE:
             raise ValueError('File exceeds 64 KiB')
         with self.lock:
-            self.check_ready()
-            self.seq = (self.seq + 1) & 0xffffffff or 1
-            source = f'{op}\n{self.seq}\n{name}\n'.encode('ascii') + data
-            with Controller(self.config) as controller:
-                controller.tap('L')
-                time.sleep(.45)
-                ready = self.wait_frame(0)
-                if ready['status'] or ready['payload'] != b'READY' or ready['checksum'] != zlib.adler32(b'READY'):
-                    raise RuntimeError('The game has not confirmed READY for a new request')
-                controller.send(source, 'ftp-request')
-                first = self.wait_frame(self.seq)
-                payload = first['payload']
-                for page in range(1, first['pages']):
-                    controller.tap('R')
-                    frame = self.wait_frame(self.seq, page)
-                    if any(frame[key] != first[key] for key in ('total', 'pages', 'checksum', 'status')):
-                        raise RuntimeError('Bridge response changed while reading pages')
-                    payload += frame['payload']
-            if len(payload) != first['total'] or zlib.adler32(payload) != first['checksum']:
-                raise RuntimeError('Optical download checksum mismatch')
-            if first['status']:
-                raise RuntimeError(payload.decode('utf-8', errors='replace'))
-            print(f'Game {op} {name}: {len(payload)} response bytes verified', flush=True)
-            return payload
+            started = time.monotonic()
+            setup_done = optical_done = None
+            metrics = dict(request_setup=0.0, optical=0.0, finalize=0.0, total=0.0,
+                           format=None, bytes=0, pages=0, captures=0, retries=0,
+                           connections=0, page_times=[], success=False)
+            self.last_metrics = metrics
+            try:
+                with self._obs_session(metrics):
+                    self.check_ready()
+                    self.seq = (self.seq + 1) & 0xffffffff or 1
+                    source = f'{op}\n{self.seq}\n{name}\n'.encode('ascii') + data
+                    with Controller(self.config) as controller:
+                        controller.tap('L')
+                        time.sleep(.45)
+                        ready = self.wait_frame(0)
+                        if ready['status'] or ready['payload'] != b'READY' or ready['checksum'] != zlib.adler32(b'READY'):
+                            raise RuntimeError('The game has not confirmed READY for a new request')
+                        controller.send(source, 'ftp-request')
+                        setup_done = time.monotonic()
+                        metrics['request_setup'] = setup_done - started
+
+                        def receive_page(page):
+                            page_start = time.monotonic()
+                            captures, retries = metrics['captures'], metrics['retries']
+                            if page:
+                                controller.tap('R')
+                            frame = self.wait_frame(self.seq, page)
+                            metrics['page_times'].append(dict(
+                                page=page, seconds=time.monotonic() - page_start,
+                                captures=metrics['captures'] - captures,
+                                retries=metrics['retries'] - retries))
+                            return frame
+
+                        first = receive_page(0)
+                        metrics.update(format=first['format'], bytes=first['total'],
+                                       pages=first['pages'], chunk_size=first['chunk_size'])
+                        payload = first['payload']
+                        for page in range(1, first['pages']):
+                            frame = receive_page(page)
+                            if any(frame[key] != first[key] for key in ('format', 'chunk_size', 'total', 'pages', 'checksum', 'status')):
+                                raise RuntimeError('Bridge response changed while reading pages')
+                            payload += frame['payload']
+                        optical_done = time.monotonic()
+                        metrics['optical'] = optical_done - setup_done
+                    if len(payload) != first['total'] or zlib.adler32(payload) != first['checksum']:
+                        raise RuntimeError('Optical download checksum mismatch')
+                    if first['status']:
+                        raise RuntimeError(payload.decode('utf-8', errors='replace'))
+                metrics['success'] = True
+                print(f'Game {op} {name}: {len(payload)} response bytes verified', flush=True)
+                return payload
+            except BaseException as error:
+                metrics['error'] = str(error)
+                raise
+            finally:
+                finished = time.monotonic()
+                metrics['total'] = finished - started
+                if setup_done is None:
+                    metrics['request_setup'] = metrics['total']
+                elif optical_done is None:
+                    metrics['optical'] = finished - setup_done
+                else:
+                    metrics['finalize'] = finished - optical_done
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('check', 'install', 'leave'))
+    parser.add_argument('action', choices=('check', 'install', 'upgrade-color', 'leave'))
     parser.add_argument('--config', type=Path, default=Path(__file__).with_name('config.json'))
     args = parser.parse_args()
     transport = GameTransport(args.config)
@@ -242,15 +303,20 @@ def main():
         print('Returned to the Lua editor.')
     else:
         # User first chooses Receive PC in the editor, as documented.
-        source = Path(__file__).with_name('ftp_bootstrap.lua').read_bytes()
+        upgrade = args.action == 'upgrade-color'
+        source_name = 'ftp_color_upgrade.lua' if upgrade else 'ftp_bootstrap.lua'
+        saved_name = 'ftp_color_upgrade.lua' if upgrade else 'ftp_console.lua'
+        source = Path(__file__).with_name(source_name).read_bytes()
         with Controller(transport.config) as controller:
-            controller.send(source, 'F000_ftp_console.lua')
+            controller.send(source, 'F000_' + saved_name)
             time.sleep(1)
             transport.capture().save(Path(__file__).with_name('install-receipt.png'))
-        print('Input stream finished. Check the GAME for PC FILE SAVED: ftp_console.lua.')
+        print('Input stream finished. Check the GAME for PC FILE SAVED: ' + saved_name + '.')
         print('Only after that confirmation: press L, release, then Y to start the bridge.')
         print('If the game reports a transfer error, do not run the buffer; retry Receive PC.')
         print('START.cmd will verify the optical bridge before opening the FTP port.')
+        if upgrade:
+            print('The upgrade creates ftp_console_color.lua and preserves ftp_console.lua.')
 
 
 if __name__ == '__main__':
